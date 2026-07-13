@@ -1,0 +1,6 @@
+.DS_Store
+.build/
+workspaces-reconnect
+*.generated.plist
+*.log
+state.json
