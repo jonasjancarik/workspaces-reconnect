@@ -25,17 +25,17 @@ if (( $# > 1 )); then
 fi
 
 move_to_trash() {
-    local path="$1"
-    [[ -e "$path" ]] || return 0
+    local target_path="$1"
+    [[ -e "$target_path" ]] || return 0
 
     if command -v trash >/dev/null; then
-        trash "$path"
+        trash "$target_path"
         return
     fi
 
     mkdir -p "$HOME/.Trash"
-    local destination="$HOME/.Trash/${path:t}.$(date +%Y%m%d-%H%M%S).$$"
-    mv "$path" "$destination"
+    local destination="$HOME/.Trash/${target_path:t}.$(date +%Y%m%d-%H%M%S).$$"
+    mv "$target_path" "$destination"
 }
 
 launchctl bootout "$DOMAIN/$LABEL" >/dev/null 2>&1 || true
@@ -54,5 +54,7 @@ fi
 
 open "$ACCESSIBILITY_URL"
 print "The watcher has been uninstalled."
-print "Select workspaces-reconnect in Accessibility settings and press − to remove its privacy entry."
+print "If any workspaces-reconnect rows are listed, select each one and click the − (remove) button"
+print "at the bottom of the list. Turning a toggle off is not enough."
+print "If no workspaces-reconnect row is listed, there is nothing else to remove."
 print "The cloned source directory was left untouched."

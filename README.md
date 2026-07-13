@@ -13,9 +13,13 @@ The watcher recognizes active sessions, startup progress, disconnected screens, 
 - The password is stored as that item's secret data.
 - The installer uses Keychain's own password prompt, so the password is not placed in shell history or process arguments.
 - The installer explicitly grants the watcher access to its Keychain item. It never uses Keychain's insecure `-A` option, which would grant every application access.
-- Password text is placed on the pasteboard only after a WorkSpaces secure-text field is confirmed and is cleared immediately afterward.
+- Credential input is sent directly to the process that owns the confirmed WorkSpaces field. The watcher never emits system-wide keystrokes, so another foreground application cannot receive the username or password.
+- The password is typed directly into the confirmed secure field and is never placed on the system pasteboard.
+- Before and during input, the watcher verifies Amazon's designated code-signing requirement, confirms that the field belongs to that visible WorkSpaces process, and checks that it remains focused. Any mismatch aborts the attempt.
 - Editable fields and registration codes are redacted from diagnostics.
 - Accessibility permission is required for the installed executable. Codex or Terminal permission is not inherited by a LaunchAgent.
+
+The watcher can safely reconnect while another application is in the foreground. It targets WorkSpaces by process ID and does not take keyboard focus away from the application you are using.
 
 The Keychain service name is `codex-amazon-workspaces`. It is an identifier, not a secret, and is retained for compatibility with existing installations.
 
@@ -37,7 +41,7 @@ The installer:
 
 1. Builds and self-tests the Swift executable locally.
 2. Asks for the WorkSpaces username.
-3. Invokes a secure Keychain prompt for the password.
+3. Reads the password at a hidden terminal prompt and saves it directly to Keychain.
 4. Installs the executable under `~/Library/Application Support/WorkSpacesReconnect/bin/`.
 5. Generates and loads a per-user LaunchAgent that runs every 10 seconds.
 6. Opens Accessibility settings and waits for `workspaces-reconnect` to be enabled.
@@ -47,7 +51,7 @@ No compiled binary, generated plist, credential, log, or state file needs to be 
 
 ## Update
 
-Run `./install.sh` again. Rebuilding changes the unsigned local executable's macOS privacy identity, so the installer asks you to remove the old `workspaces-reconnect` Accessibility entry and enable the newly registered one. It also refreshes the Keychain trusted-application record.
+Run `./install.sh` again. Rebuilding changes the unsigned local executable's macOS privacy identity. If Accessibility settings lists any old `workspaces-reconnect` rows, the installer asks you to select each one and click the − (remove) button at the bottom of the list; turning its toggle off is not enough. There might not be an old row, in which case you can continue without removing anything. The installer then registers a new entry for you to enable and refreshes the Keychain trusted-application record.
 
 ## Verify
 
@@ -82,13 +86,21 @@ Remove those files and the Keychain credential:
 ./uninstall.sh --purge
 ```
 
-Both forms leave the cloned source directory untouched and open Accessibility settings so its stale privacy entry can be removed manually. They are safe to rerun.
+Both forms leave the cloned source directory untouched and open Accessibility settings so any stale privacy entry can be removed manually. If one or more `workspaces-reconnect` rows are listed, select each one and click the − (remove) button at the bottom of the list; merely turning the toggle off does not remove it. If no row is listed, there is nothing else to remove. The scripts are safe to rerun.
 
 The uninstaller intentionally does not call `tccutil reset Accessibility`, because that would remove Accessibility permission from every application.
 
 ## Development
 
 Build and run the source-only tests without installing:
+
+```bash
+./test.sh
+```
+
+The test compiles the watcher, runs its input-target classification checks, and fails if credential handling regresses to system-wide keyboard events or the system pasteboard.
+
+The equivalent manual build is:
 
 ```bash
 xcrun swiftc \
