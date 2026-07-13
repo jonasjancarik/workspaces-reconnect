@@ -35,17 +35,17 @@ for command in xcrun plutil launchctl security open; do
 done
 
 move_to_trash() {
-    local path="$1"
-    [[ -e "$path" ]] || return 0
+    local target_path="$1"
+    [[ -e "$target_path" ]] || return 0
 
     if command -v trash >/dev/null; then
-        trash "$path"
+        trash "$target_path"
         return
     fi
 
     mkdir -p "$HOME/.Trash"
-    local destination="$HOME/.Trash/${path:t}.$(date +%Y%m%d-%H%M%S).$$"
-    mv "$path" "$destination"
+    local destination="$HOME/.Trash/${target_path:t}.$(date +%Y%m%d-%H%M%S).$$"
+    mv "$target_path" "$destination"
 }
 
 run_accessibility_request() {
@@ -105,7 +105,7 @@ if security find-generic-password -s "$KEYCHAIN_SERVICE" >/dev/null 2>&1 \
     exit 65
 fi
 
-print "Enter the WorkSpaces password at the secure Keychain prompt."
+print "Enter the WorkSpaces password at the hidden prompt. Your input will not be shown."
 security add-generic-password \
     -U \
     -s "$KEYCHAIN_SERVICE" \
@@ -122,9 +122,10 @@ fi
 if [[ "$is_update" == true ]]; then
     print
     print "The rebuilt executable has a new macOS privacy identity."
-    print "In Accessibility settings, select every existing workspaces-reconnect entry and press −."
+    print "In Accessibility settings, select each existing workspaces-reconnect row."
+    print "Click the − (remove) button at the bottom of the list. Turning the toggle off is not enough."
     open "$ACCESSIBILITY_URL"
-    print -n "Press Return after the old entry is gone: "
+    print -n "Press Return after every old workspaces-reconnect row has been removed: "
     IFS= read -r _
 fi
 
@@ -146,7 +147,7 @@ temporary_plist=""
 run_accessibility_request
 open "$ACCESSIBILITY_URL"
 print
-print "Turn on the new workspaces-reconnect entry in Accessibility settings."
+print "Turn on the newly added workspaces-reconnect entry in Accessibility settings."
 print -n "Press Return after it is enabled: "
 IFS= read -r _
 

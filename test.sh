@@ -6,6 +6,15 @@ set -euo pipefail
 readonly SCRIPT_DIR="${0:A:h}"
 readonly SOURCE="$SCRIPT_DIR/WorkSpacesReconnect.swift"
 
+for script in "$SCRIPT_DIR/install.sh" "$SCRIPT_DIR/uninstall.sh"; do
+    zsh -n "$script"
+
+    if grep -Eq 'local[[:space:]]+path=' "$script"; then
+        print -u2 "Shell regression: zsh's special path variable must not be shadowed."
+        exit 1
+    fi
+done
+
 temporary_directory="$(mktemp -d "${TMPDIR:-/tmp}/workspaces-reconnect-test.XXXXXX")"
 temporary_binary="$temporary_directory/workspaces-reconnect"
 cleanup() {

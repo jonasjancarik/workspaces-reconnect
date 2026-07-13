@@ -41,7 +41,7 @@ The installer:
 
 1. Builds and self-tests the Swift executable locally.
 2. Asks for the WorkSpaces username.
-3. Invokes a secure Keychain prompt for the password.
+3. Reads the password at a hidden terminal prompt and saves it directly to Keychain.
 4. Installs the executable under `~/Library/Application Support/WorkSpacesReconnect/bin/`.
 5. Generates and loads a per-user LaunchAgent that runs every 10 seconds.
 6. Opens Accessibility settings and waits for `workspaces-reconnect` to be enabled.
@@ -51,7 +51,7 @@ No compiled binary, generated plist, credential, log, or state file needs to be 
 
 ## Update
 
-Run `./install.sh` again. Rebuilding changes the unsigned local executable's macOS privacy identity, so the installer asks you to remove the old `workspaces-reconnect` Accessibility entry and enable the newly registered one. It also refreshes the Keychain trusted-application record.
+Run `./install.sh` again. Rebuilding changes the unsigned local executable's macOS privacy identity, so the installer asks you to select each old `workspaces-reconnect` row and click the − (remove) button at the bottom of the Accessibility list. Turning its toggle off is not enough. The installer then registers a new entry for you to enable and refreshes the Keychain trusted-application record.
 
 ## Verify
 
@@ -86,7 +86,7 @@ Remove those files and the Keychain credential:
 ./uninstall.sh --purge
 ```
 
-Both forms leave the cloned source directory untouched and open Accessibility settings so its stale privacy entry can be removed manually. They are safe to rerun.
+Both forms leave the cloned source directory untouched and open Accessibility settings so its stale privacy entry can be removed manually. Select each `workspaces-reconnect` row and click the − (remove) button at the bottom of the list; merely turning the toggle off does not remove it. The scripts are safe to rerun.
 
 The uninstaller intentionally does not call `tccutil reset Accessibility`, because that would remove Accessibility permission from every application.
 
