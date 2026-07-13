@@ -5,8 +5,21 @@ import Foundation
 import Security
 
 private let keychainService = "codex-amazon-workspaces"
+private let workSpacesBundleIdentifier = "com.amazon.workspaces"
+private let workSpacesDesignatedRequirement = """
+identifier "com.amazon.workspaces" and anchor apple generic and \
+( \
+certificate leaf[field.1.2.840.113635.100.6.1.9] /* exists */ or \
+( \
+certificate 1[field.1.2.840.113635.100.6.2.6] /* exists */ and \
+certificate leaf[field.1.2.840.113635.100.6.1.13] /* exists */ and \
+certificate leaf[subject.OU] = "94KV3E626L" \
+) \
+)
+"""
 private let retryCooldown: TimeInterval = 60
 private let maximumNodes = 600
+private let maximumUnicodeUnitsPerEvent = 20
 
 private enum ScreenState: String, Codable {
     case noWindow = "no-window"
@@ -81,6 +94,20 @@ private struct AccessibilityNode {
 private struct UISnapshot {
     let state: ScreenState
     let nodes: [AccessibilityNode]
+}
+
+private enum InputFieldKind {
+    case username
+    case password
+
+    func matches(_ node: AccessibilityNode) -> Bool {
+        switch self {
+        case .username:
+            return node.isUsernameField
+        case .password:
+            return node.isPasswordField
+        }
+    }
 }
 
 private enum WatcherError: Error, CustomStringConvertible {
@@ -344,35 +371,221 @@ private func focus(_ node: AccessibilityNode) throws {
     }
 }
 
-private func postKey(keyCode: CGKeyCode, flags: CGEventFlags = []) {
-    let source = CGEventSource(stateID: .hidSystemState)
-    let down = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true)
-    down?.flags = flags
-    down?.post(tap: .cghidEventTap)
-    let up = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false)
-    up?.flags = flags
-    up?.post(tap: .cghidEventTap)
+private func processIdentifier(of element: AXUIElement) throws -> pid_t {
+    var processIdentifier: pid_t = 0
+    let result = AXUIElementGetPid(element, &processIdentifier)
+    guard result == .success, processIdentifier > 0 else {
+        throw WatcherError.accessibility("Could not identify the input field owner; code \(result.rawValue)")
+    }
+    return processIdentifier
 }
 
-private func postText(_ text: String) {
-    let source = CGEventSource(stateID: .hidSystemState)
-    let characters = Array(text.utf16)
-    let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true)
-    characters.withUnsafeBufferPointer { buffer in
-        down?.keyboardSetUnicodeString(stringLength: characters.count, unicodeString: buffer.baseAddress!)
+private func processHasAuthenticWorkSpacesSignature(_ processIdentifier: pid_t) -> Bool {
+    let attributes = [kSecGuestAttributePid as String: NSNumber(value: processIdentifier)]
+    var code: SecCode?
+    guard
+        SecCodeCopyGuestWithAttributes(
+            nil,
+            attributes as CFDictionary,
+            SecCSFlags(rawValue: 0),
+            &code
+        ) == errSecSuccess,
+        let code
+    else {
+        return false
     }
-    down?.post(tap: .cghidEventTap)
-    let up = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false)
-    up?.post(tap: .cghidEventTap)
+
+    var requirement: SecRequirement?
+    guard
+        SecRequirementCreateWithString(
+            workSpacesDesignatedRequirement as CFString,
+            SecCSFlags(rawValue: 0),
+            &requirement
+        ) == errSecSuccess,
+        let requirement
+    else {
+        return false
+    }
+
+    return SecCodeCheckValidity(code, SecCSFlags(rawValue: 0), requirement) == errSecSuccess
+}
+
+private func inputTargetIsAllowed(
+    _ node: AccessibilityNode,
+    expectedKind: InputFieldKind,
+    ownerProcessIdentifier: pid_t,
+    ownerBundleIdentifier: String?,
+    signatureIsValid: Bool,
+    workSpacesProcessIdentifiers: Set<pid_t>
+) -> Bool {
+    expectedKind.matches(node)
+        && ownerProcessIdentifier > 0
+        && ownerBundleIdentifier == workSpacesBundleIdentifier
+        && signatureIsValid
+        && workSpacesProcessIdentifiers.contains(ownerProcessIdentifier)
+}
+
+private func assertFocusedInputTarget(
+    _ node: AccessibilityNode,
+    expectedKind: InputFieldKind,
+    processIdentifier: pid_t
+) throws {
+    let runningApplication = NSRunningApplication(processIdentifier: processIdentifier)
+    let workSpacesProcessIdentifiers = Set(currentWindows().map(\.processIdentifier))
+    guard inputTargetIsAllowed(
+        node,
+        expectedKind: expectedKind,
+        ownerProcessIdentifier: processIdentifier,
+        ownerBundleIdentifier: runningApplication?.bundleIdentifier,
+        signatureIsValid: processHasAuthenticWorkSpacesSignature(processIdentifier),
+        workSpacesProcessIdentifiers: workSpacesProcessIdentifiers
+    ) else {
+        throw WatcherError.interaction("Input target stopped belonging to the WorkSpaces application")
+    }
+
+    let application = AXUIElementCreateApplication(processIdentifier)
+    guard
+        let focusedElement = elementAttribute(application, kAXFocusedUIElementAttribute),
+        CFEqual(focusedElement, node.element)
+    else {
+        throw WatcherError.interaction("WorkSpaces input field did not retain focus; refusing to type")
+    }
+}
+
+private func prepareInputTarget(_ node: AccessibilityNode, expectedKind: InputFieldKind) throws -> pid_t {
+    let processIdentifier = try processIdentifier(of: node.element)
+    let runningApplication = NSRunningApplication(processIdentifier: processIdentifier)
+    let workSpacesProcessIdentifiers = Set(currentWindows().map(\.processIdentifier))
+    guard inputTargetIsAllowed(
+        node,
+        expectedKind: expectedKind,
+        ownerProcessIdentifier: processIdentifier,
+        ownerBundleIdentifier: runningApplication?.bundleIdentifier,
+        signatureIsValid: processHasAuthenticWorkSpacesSignature(processIdentifier),
+        workSpacesProcessIdentifiers: workSpacesProcessIdentifiers
+    ) else {
+        throw WatcherError.interaction("Input field was not owned by a recognized WorkSpaces window")
+    }
+
+    try focus(node)
+    Thread.sleep(forTimeInterval: 0.1)
+    try assertFocusedInputTarget(
+        node,
+        expectedKind: expectedKind,
+        processIdentifier: processIdentifier
+    )
+    return processIdentifier
+}
+
+private func postKey(
+    keyCode: CGKeyCode,
+    flags: CGEventFlags = [],
+    to processIdentifier: pid_t
+) throws {
+    guard let source = CGEventSource(stateID: .privateState) else {
+        throw WatcherError.interaction("Could not create a keyboard event source")
+    }
+    guard
+        let down = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true),
+        let up = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false)
+    else {
+        throw WatcherError.interaction("Could not create a keyboard event")
+    }
+    down.flags = flags
+    down.postToPid(processIdentifier)
+    up.flags = flags
+    up.postToPid(processIdentifier)
+}
+
+private func unicodeEventChunks(_ text: String) -> [[UniChar]] {
+    let units = Array(text.utf16)
+    var chunks: [[UniChar]] = []
+    var start = 0
+
+    while start < units.count {
+        var end = min(start + maximumUnicodeUnitsPerEvent, units.count)
+        if end < units.count,
+           end > start,
+           (0xD800...0xDBFF).contains(units[end - 1]),
+           (0xDC00...0xDFFF).contains(units[end]) {
+            end -= 1
+        }
+        chunks.append(Array(units[start..<end]))
+        start = end
+    }
+    return chunks
+}
+
+private func postTextChunk(_ characters: [UniChar], to processIdentifier: pid_t) throws {
+    guard !characters.isEmpty else { return }
+    guard let source = CGEventSource(stateID: .privateState) else {
+        throw WatcherError.interaction("Could not create a text event source")
+    }
+    guard
+        let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
+        let up = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false)
+    else {
+        throw WatcherError.interaction("Could not create a text event")
+    }
+    characters.withUnsafeBufferPointer { buffer in
+        down.keyboardSetUnicodeString(stringLength: characters.count, unicodeString: buffer.baseAddress!)
+    }
+    down.flags = []
+    down.postToPid(processIdentifier)
+    up.flags = []
+    up.postToPid(processIdentifier)
+}
+
+private func replaceText(
+    _ text: String,
+    in field: AccessibilityNode,
+    expectedKind: InputFieldKind
+) throws {
+    let processIdentifier = try prepareInputTarget(field, expectedKind: expectedKind)
+    try postKey(keyCode: 0, flags: .maskCommand, to: processIdentifier) // Command-A
+    try assertFocusedInputTarget(
+        field,
+        expectedKind: expectedKind,
+        processIdentifier: processIdentifier
+    )
+    try postKey(keyCode: 51, to: processIdentifier) // Delete
+    try assertFocusedInputTarget(
+        field,
+        expectedKind: expectedKind,
+        processIdentifier: processIdentifier
+    )
+    for chunk in unicodeEventChunks(text) {
+        try assertFocusedInputTarget(
+            field,
+            expectedKind: expectedKind,
+            processIdentifier: processIdentifier
+        )
+        try postTextChunk(chunk, to: processIdentifier)
+    }
+    Thread.sleep(forTimeInterval: 0.2)
+    try assertFocusedInputTarget(
+        field,
+        expectedKind: expectedKind,
+        processIdentifier: processIdentifier
+    )
+
+    let resultingValue = stringAttribute(field.element, kAXValueAttribute)
+    switch expectedKind {
+    case .username:
+        guard resultingValue == text else {
+            throw WatcherError.interaction("WorkSpaces username field did not accept the targeted input")
+        }
+    case .password:
+        // Secure fields expose only a masked value, and mask-length semantics vary by framework.
+        // Target, focus, and nonempty checks are portable; WorkSpaces validates the credential.
+        guard !resultingValue.isEmpty else {
+            throw WatcherError.interaction("WorkSpaces password field did not accept the targeted input")
+        }
+    }
 }
 
 private func typeUsername(_ username: String, into field: AccessibilityNode) throws {
-    try focus(field)
-    Thread.sleep(forTimeInterval: 0.1)
-    postKey(keyCode: 0, flags: .maskCommand) // Command-A
-    postKey(keyCode: 51) // Delete
-    postText(username)
-    Thread.sleep(forTimeInterval: 0.2)
+    try replaceText(username, in: field, expectedKind: .username)
 }
 
 private func keychainCredentials() throws -> Credentials {
@@ -406,20 +619,8 @@ private func keychainCredentials() throws -> Credentials {
     return Credentials(username: username, password: password)
 }
 
-private func pastePassword(_ password: String, into field: AccessibilityNode) throws {
-    try focus(field)
-    Thread.sleep(forTimeInterval: 0.1)
-    postKey(keyCode: 0, flags: .maskCommand) // Command-A
-    postKey(keyCode: 51) // Delete
-
-    let pasteboard = NSPasteboard.general
-    pasteboard.clearContents()
-    guard pasteboard.setString(password, forType: .string) else {
-        throw WatcherError.interaction("Could not put the Keychain password on the pasteboard")
-    }
-    defer { pasteboard.clearContents() }
-    postKey(keyCode: 9, flags: .maskCommand) // Command-V
-    Thread.sleep(forTimeInterval: 0.25)
+private func typePassword(_ password: String, into field: AccessibilityNode) throws {
+    try replaceText(password, in: field, expectedKind: .password)
 }
 
 private func waitForSnapshot(timeout: TimeInterval, matching states: Set<ScreenState>) -> UISnapshot? {
@@ -438,7 +639,7 @@ private func submitPassword(from current: UISnapshot, credentials: Credentials) 
     guard let field = current.nodes.first(where: \.isPasswordField) else {
         throw WatcherError.interaction("Confirmed password screen had no secure text field")
     }
-    try pastePassword(credentials.password, into: field)
+    try typePassword(credentials.password, into: field)
 
     var refreshed = snapshot()
     var signIn = button(refreshed.nodes, labels: ["sign in", "connect"])
@@ -609,6 +810,14 @@ private func requestAccessibility() {
 }
 
 private func selfTest() throws {
+    var parsedRequirement: SecRequirement?
+    precondition(SecRequirementCreateWithString(
+        workSpacesDesignatedRequirement as CFString,
+        SecCSFlags(rawValue: 0),
+        &parsedRequirement
+    ) == errSecSuccess)
+    precondition(parsedRequirement != nil)
+
     let active = AccessibilityNode(
         element: AXUIElementCreateSystemWide(), role: kAXWindowRole, subrole: "",
         title: "Amazon WorkSpaces", description: "SessionWindow", value: "", enabled: true
@@ -620,14 +829,59 @@ private func selfTest() throws {
         subrole: kAXSecureTextFieldSubrole, title: "", description: "Password", value: "", enabled: true
     )
     precondition(secure.isPasswordField)
+    precondition(InputFieldKind.password.matches(secure))
+    precondition(inputTargetIsAllowed(
+        secure,
+        expectedKind: .password,
+        ownerProcessIdentifier: 42,
+        ownerBundleIdentifier: workSpacesBundleIdentifier,
+        signatureIsValid: true,
+        workSpacesProcessIdentifiers: [42]
+    ))
+    precondition(!inputTargetIsAllowed(
+        secure,
+        expectedKind: .password,
+        ownerProcessIdentifier: 7,
+        ownerBundleIdentifier: workSpacesBundleIdentifier,
+        signatureIsValid: true,
+        workSpacesProcessIdentifiers: [42]
+    ))
+    precondition(!inputTargetIsAllowed(
+        secure,
+        expectedKind: .password,
+        ownerProcessIdentifier: 42,
+        ownerBundleIdentifier: "example.fake-workspaces",
+        signatureIsValid: true,
+        workSpacesProcessIdentifiers: [42]
+    ))
+    precondition(!inputTargetIsAllowed(
+        secure,
+        expectedKind: .password,
+        ownerProcessIdentifier: 42,
+        ownerBundleIdentifier: workSpacesBundleIdentifier,
+        signatureIsValid: false,
+        workSpacesProcessIdentifiers: [42]
+    ))
 
     let usernameField = AccessibilityNode(
         element: AXUIElementCreateSystemWide(), role: kAXTextFieldRole,
         subrole: "", title: "", description: "Username", value: "example-user", enabled: true
     )
     precondition(usernameField.isUsernameField)
+    precondition(InputFieldKind.username.matches(usernameField))
+    precondition(!InputFieldKind.password.matches(usernameField))
     precondition(normalizedDiagnosticText(usernameField) == "<editable field redacted>")
 
+    let longText = String(repeating: "a", count: maximumUnicodeUnitsPerEvent + 1)
+    let longTextChunks = unicodeEventChunks(longText)
+    precondition(longTextChunks.map(\.count) == [maximumUnicodeUnitsPerEvent, 1])
+    precondition(longTextChunks.flatMap { $0 } == Array(longText.utf16))
+
+    let surrogateBoundaryText = String(repeating: "a", count: maximumUnicodeUnitsPerEvent - 1)
+        + "😀z"
+    let surrogateBoundaryChunks = unicodeEventChunks(surrogateBoundaryText)
+    precondition(surrogateBoundaryChunks.map(\.count) == [maximumUnicodeUnitsPerEvent - 1, 3])
+    precondition(surrogateBoundaryChunks.flatMap { $0 } == Array(surrogateBoundaryText.utf16))
     let registrationCode = AccessibilityNode(
         element: AXUIElementCreateSystemWide(), role: kAXStaticTextRole,
         subrole: "", title: "", description: "",

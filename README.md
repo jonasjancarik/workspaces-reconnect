@@ -13,9 +13,13 @@ The watcher recognizes active sessions, startup progress, disconnected screens, 
 - The password is stored as that item's secret data.
 - The installer uses Keychain's own password prompt, so the password is not placed in shell history or process arguments.
 - The installer explicitly grants the watcher access to its Keychain item. It never uses Keychain's insecure `-A` option, which would grant every application access.
-- Password text is placed on the pasteboard only after a WorkSpaces secure-text field is confirmed and is cleared immediately afterward.
+- Credential input is sent directly to the process that owns the confirmed WorkSpaces field. The watcher never emits system-wide keystrokes, so another foreground application cannot receive the username or password.
+- The password is typed directly into the confirmed secure field and is never placed on the system pasteboard.
+- Before and during input, the watcher verifies Amazon's designated code-signing requirement, confirms that the field belongs to that visible WorkSpaces process, and checks that it remains focused. Any mismatch aborts the attempt.
 - Editable fields and registration codes are redacted from diagnostics.
 - Accessibility permission is required for the installed executable. Codex or Terminal permission is not inherited by a LaunchAgent.
+
+The watcher can safely reconnect while another application is in the foreground. It targets WorkSpaces by process ID and does not take keyboard focus away from the application you are using.
 
 The Keychain service name is `codex-amazon-workspaces`. It is an identifier, not a secret, and is retained for compatibility with existing installations.
 
@@ -89,6 +93,14 @@ The uninstaller intentionally does not call `tccutil reset Accessibility`, becau
 ## Development
 
 Build and run the source-only tests without installing:
+
+```bash
+./test.sh
+```
+
+The test compiles the watcher, runs its input-target classification checks, and fails if credential handling regresses to system-wide keyboard events or the system pasteboard.
+
+The equivalent manual build is:
 
 ```bash
 xcrun swiftc \
