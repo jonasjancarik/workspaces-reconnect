@@ -54,6 +54,7 @@ fi
 
 open "$ACCESSIBILITY_URL"
 print "The watcher has been uninstalled."
-print "Select each workspaces-reconnect row and click the − (remove) button at the bottom of the list."
-print "Turning the toggle off is not enough to remove its privacy entry."
+print "If any workspaces-reconnect rows are listed, select each one and click the − (remove) button"
+print "at the bottom of the list. Turning a toggle off is not enough."
+print "If no workspaces-reconnect row is listed, there is nothing else to remove."
 print "The cloned source directory was left untouched."

@@ -122,10 +122,11 @@ fi
 if [[ "$is_update" == true ]]; then
     print
     print "The rebuilt executable has a new macOS privacy identity."
-    print "In Accessibility settings, select each existing workspaces-reconnect row."
-    print "Click the − (remove) button at the bottom of the list. Turning the toggle off is not enough."
+    print "If Accessibility settings lists any workspaces-reconnect rows, select each one and"
+    print "click the − (remove) button at the bottom. Turning a toggle off is not enough."
+    print "If no workspaces-reconnect row is listed, there is nothing to remove."
     open "$ACCESSIBILITY_URL"
-    print -n "Press Return after every old workspaces-reconnect row has been removed: "
+    print -n "Press Return when no old workspaces-reconnect rows remain: "
     IFS= read -r _
 fi
 
@@ -147,7 +148,8 @@ temporary_plist=""
 run_accessibility_request
 open "$ACCESSIBILITY_URL"
 print
-print "Turn on the newly added workspaces-reconnect entry in Accessibility settings."
+print "A new workspaces-reconnect entry should now be listed in Accessibility settings."
+print "Turn on its toggle."
 print -n "Press Return after it is enabled: "
 IFS= read -r _
 

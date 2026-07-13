@@ -51,7 +51,7 @@ No compiled binary, generated plist, credential, log, or state file needs to be 
 
 ## Update
 
-Run `./install.sh` again. Rebuilding changes the unsigned local executable's macOS privacy identity, so the installer asks you to select each old `workspaces-reconnect` row and click the − (remove) button at the bottom of the Accessibility list. Turning its toggle off is not enough. The installer then registers a new entry for you to enable and refreshes the Keychain trusted-application record.
+Run `./install.sh` again. Rebuilding changes the unsigned local executable's macOS privacy identity. If Accessibility settings lists any old `workspaces-reconnect` rows, the installer asks you to select each one and click the − (remove) button at the bottom of the list; turning its toggle off is not enough. There might not be an old row, in which case you can continue without removing anything. The installer then registers a new entry for you to enable and refreshes the Keychain trusted-application record.
 
 ## Verify
 
@@ -86,7 +86,7 @@ Remove those files and the Keychain credential:
 ./uninstall.sh --purge
 ```
 
-Both forms leave the cloned source directory untouched and open Accessibility settings so its stale privacy entry can be removed manually. Select each `workspaces-reconnect` row and click the − (remove) button at the bottom of the list; merely turning the toggle off does not remove it. The scripts are safe to rerun.
+Both forms leave the cloned source directory untouched and open Accessibility settings so any stale privacy entry can be removed manually. If one or more `workspaces-reconnect` rows are listed, select each one and click the − (remove) button at the bottom of the list; merely turning the toggle off does not remove it. If no row is listed, there is nothing else to remove. The scripts are safe to rerun.
 
 The uninstaller intentionally does not call `tccutil reset Accessibility`, because that would remove Accessibility permission from every application.
 
