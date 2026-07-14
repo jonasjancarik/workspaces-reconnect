@@ -5,8 +5,11 @@ set -euo pipefail
 
 readonly SCRIPT_DIR="${0:A:h}"
 readonly SOURCE="$SCRIPT_DIR/WorkSpacesReconnect.swift"
+readonly INSTALLER="$SCRIPT_DIR/install.sh"
+readonly VERIFIER="$SCRIPT_DIR/verify.sh"
+readonly PLIST_TEMPLATE="$SCRIPT_DIR/com.jonasjancarik.workspaces-reconnect.plist"
 
-for script in "$SCRIPT_DIR/install.sh" "$SCRIPT_DIR/uninstall.sh"; do
+for script in "$INSTALLER" "$SCRIPT_DIR/uninstall.sh" "$VERIFIER"; do
     zsh -n "$script"
 
     if grep -Eq 'local[[:space:]]+path=' "$script"; then
@@ -15,8 +18,20 @@ for script in "$SCRIPT_DIR/install.sh" "$SCRIPT_DIR/uninstall.sh"; do
     fi
 done
 
+if grep -Fq 'plutil -replace ProgramArguments.0' "$INSTALLER"; then
+    print -u2 "LaunchAgent regression: plutil inserts instead of replacing array item zero."
+    exit 1
+fi
+
+if ! grep -Fq 'plutil -remove ProgramArguments.0 "$temporary_plist"' "$INSTALLER" \
+    || ! grep -Fq 'plutil -insert ProgramArguments.0 -string "$BINARY" "$temporary_plist"' "$INSTALLER"; then
+    print -u2 "LaunchAgent regression: installer must remove the placeholder before inserting the binary."
+    exit 1
+fi
+
 temporary_directory="$(mktemp -d "${TMPDIR:-/tmp}/workspaces-reconnect-test.XXXXXX")"
 temporary_binary="$temporary_directory/workspaces-reconnect"
+temporary_plist="$temporary_directory/com.jonasjancarik.workspaces-reconnect.plist"
 cleanup() {
     /bin/rm -rf "$temporary_directory"
 }
@@ -24,6 +39,34 @@ trap cleanup EXIT
 
 export CLANG_MODULE_CACHE_PATH="$temporary_directory/clang-module-cache"
 export SWIFT_MODULECACHE_PATH="$temporary_directory/swift-module-cache"
+
+cp "$PLIST_TEMPLATE" "$temporary_plist"
+expected_program="$temporary_directory/Application Support/workspaces-reconnect"
+plutil -remove ProgramArguments.0 "$temporary_plist"
+plutil -insert ProgramArguments.0 -string "$expected_program" "$temporary_plist"
+if [[ "$(plutil -extract ProgramArguments.0 raw "$temporary_plist")" != "$expected_program" ]] \
+    || [[ "$(plutil -extract ProgramArguments.1 raw "$temporary_plist")" != "check" ]] \
+    || plutil -extract ProgramArguments.2 raw "$temporary_plist" >/dev/null 2>&1; then
+    print -u2 "LaunchAgent regression: generated command must contain exactly the binary and check."
+    exit 1
+fi
+
+malformed_home="$temporary_directory/malformed-home"
+malformed_binary="$malformed_home/Library/Application Support/WorkSpacesReconnect/bin/workspaces-reconnect"
+malformed_plist="$malformed_home/Library/LaunchAgents/com.jonasjancarik.workspaces-reconnect.plist"
+malformed_output="$temporary_directory/malformed-verification.txt"
+mkdir -p "${malformed_binary:h}" "${malformed_plist:h}"
+cp /usr/bin/true "$malformed_binary"
+cp "$PLIST_TEMPLATE" "$malformed_plist"
+plutil -replace ProgramArguments.0 -string "$malformed_binary" "$malformed_plist"
+if HOME="$malformed_home" "$VERIFIER" >"$malformed_output" 2>&1; then
+    print -u2 "LaunchAgent regression: verification accepted an extra scheduled argument."
+    exit 1
+fi
+if ! grep -Fq "LaunchAgent verification failed:" "$malformed_output"; then
+    print -u2 "LaunchAgent regression: verification did not explain the malformed command."
+    exit 1
+fi
 
 xcrun swiftc \
     -O \
@@ -70,4 +113,4 @@ if ! grep -Fq 'certificate leaf[subject.OU] = "94KV3E626L"' "$SOURCE"; then
     exit 1
 fi
 
-print "security regression checks passed"
+print "security and LaunchAgent regression checks passed"

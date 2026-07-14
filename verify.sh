@@ -20,6 +20,15 @@ if [[ ! -x "$BINARY" || ! -f "$PLIST_PATH" ]]; then
     exit 66
 fi
 
+launch_agent_arguments_are_valid() {
+    local plist_path="$1"
+    local expected_binary="$2"
+
+    [[ "$(plutil -extract ProgramArguments.0 raw "$plist_path")" == "$expected_binary" ]] \
+        && [[ "$(plutil -extract ProgramArguments.1 raw "$plist_path")" == "check" ]] \
+        && ! plutil -extract ProgramArguments.2 raw "$plist_path" >/dev/null 2>&1
+}
+
 run_once() {
     local command_name="$1"
     local marker="$2"
@@ -42,6 +51,13 @@ run_once() {
     REPLY="$(<"$output_file")"
     /bin/rm -f "$output_file"
 }
+
+if ! launch_agent_arguments_are_valid "$PLIST_PATH" "$BINARY"; then
+    print -u2 "LaunchAgent verification failed:"
+    print -u2 "Expected exactly: $BINARY check"
+    print -u2 "Re-run ./install.sh to repair the scheduled command."
+    exit 78
+fi
 
 if ! security find-generic-password -s "$KEYCHAIN_SERVICE" >/dev/null 2>&1; then
     print -u2 "The WorkSpaces credential is missing from Keychain."

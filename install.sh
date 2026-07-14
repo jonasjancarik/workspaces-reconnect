@@ -67,6 +67,15 @@ run_accessibility_request() {
     /bin/rm -f "$output_file"
 }
 
+launch_agent_arguments_are_valid() {
+    local plist_path="$1"
+    local expected_binary="$2"
+
+    [[ "$(plutil -extract ProgramArguments.0 raw "$plist_path")" == "$expected_binary" ]] \
+        && [[ "$(plutil -extract ProgramArguments.1 raw "$plist_path")" == "check" ]] \
+        && ! plutil -extract ProgramArguments.2 raw "$plist_path" >/dev/null 2>&1
+}
+
 mkdir -p "$BIN_DIR" "$HOME/Library/LaunchAgents"
 temporary_binary="$(mktemp "$BIN_DIR/.workspaces-reconnect.XXXXXX")"
 temporary_plist="$(mktemp "${TMPDIR:-/tmp}/workspaces-reconnect-plist.XXXXXX")"
@@ -138,10 +147,15 @@ mv "$temporary_binary" "$BINARY"
 temporary_binary=""
 
 cp "$PLIST_TEMPLATE" "$temporary_plist"
-plutil -replace ProgramArguments.0 -string "$BINARY" "$temporary_plist"
+plutil -remove ProgramArguments.0 "$temporary_plist"
+plutil -insert ProgramArguments.0 -string "$BINARY" "$temporary_plist"
 plutil -replace StandardOutPath -string "$LOG_PATH" "$temporary_plist"
 plutil -replace StandardErrorPath -string "$LOG_PATH" "$temporary_plist"
 plutil -lint "$temporary_plist" >/dev/null
+if ! launch_agent_arguments_are_valid "$temporary_plist" "$BINARY"; then
+    print -u2 "The generated LaunchAgent command is invalid; expected only: $BINARY check"
+    exit 78
+fi
 mv "$temporary_plist" "$PLIST_PATH"
 temporary_plist=""
 

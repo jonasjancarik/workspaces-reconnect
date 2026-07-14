@@ -59,7 +59,7 @@ Run `./install.sh` again. Rebuilding changes the unsigned local executable's mac
 ./verify.sh
 ```
 
-This runs diagnostics and a credential-read check as one-shot launchd jobs. Running the executable directly from Terminal is not an equivalent permission test.
+This confirms that the scheduled command contains only the watcher binary and `check`, then runs diagnostics and a credential-read check as one-shot launchd jobs. Running the executable directly from Terminal is not an equivalent permission test.
 
 Additional diagnostics:
 
