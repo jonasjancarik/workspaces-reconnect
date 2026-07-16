@@ -239,6 +239,18 @@ private func childElements(_ element: AXUIElement) -> [AXUIElement] {
     copyAttribute(element, kAXChildrenAttribute) as? [AXUIElement] ?? []
 }
 
+private func accessibilityNode(from element: AXUIElement) -> AccessibilityNode {
+    AccessibilityNode(
+        element: element,
+        role: stringAttribute(element, kAXRoleAttribute),
+        subrole: stringAttribute(element, kAXSubroleAttribute),
+        title: stringAttribute(element, kAXTitleAttribute),
+        description: stringAttribute(element, kAXDescriptionAttribute),
+        value: stringAttribute(element, kAXValueAttribute),
+        enabled: boolAttribute(element, kAXEnabledAttribute, default: true)
+    )
+}
+
 private func mainWindow(for processIdentifier: pid_t) -> AXUIElement? {
     let application = AXUIElementCreateApplication(processIdentifier)
     if let main = elementAttribute(application, kAXMainWindowAttribute) {
@@ -261,15 +273,7 @@ private func accessibilityNodes(from root: AXUIElement) -> [AccessibilityNode] {
 
     while !queue.isEmpty && result.count < maximumNodes {
         let (element, depth) = queue.removeFirst()
-        result.append(AccessibilityNode(
-            element: element,
-            role: stringAttribute(element, kAXRoleAttribute),
-            subrole: stringAttribute(element, kAXSubroleAttribute),
-            title: stringAttribute(element, kAXTitleAttribute),
-            description: stringAttribute(element, kAXDescriptionAttribute),
-            value: stringAttribute(element, kAXValueAttribute),
-            enabled: boolAttribute(element, kAXEnabledAttribute, default: true)
-        ))
+        result.append(accessibilityNode(from: element))
         if depth < 12 {
             queue.append(contentsOf: childElements(element).map { ($0, depth + 1) })
         }
@@ -371,7 +375,7 @@ private func focus(_ node: AccessibilityNode) throws {
     }
 }
 
-private func processIdentifier(of element: AXUIElement) throws -> pid_t {
+private func processIdentifierForElement(_ element: AXUIElement) throws -> pid_t {
     var processIdentifier: pid_t = 0
     let result = AXUIElementGetPid(element, &processIdentifier)
     guard result == .success, processIdentifier > 0 else {
@@ -425,6 +429,26 @@ private func inputTargetIsAllowed(
         && workSpacesProcessIdentifiers.contains(ownerProcessIdentifier)
 }
 
+private func focusedInputTargetIsAllowed(
+    _ focusedNode: AccessibilityNode,
+    expectedKind: InputFieldKind,
+    expectedProcessIdentifier: pid_t,
+    focusedProcessIdentifier: pid_t,
+    focusedOwnerBundleIdentifier: String?,
+    signatureIsValid: Bool,
+    workSpacesProcessIdentifiers: Set<pid_t>
+) -> Bool {
+    focusedProcessIdentifier == expectedProcessIdentifier
+        && inputTargetIsAllowed(
+            focusedNode,
+            expectedKind: expectedKind,
+            ownerProcessIdentifier: focusedProcessIdentifier,
+            ownerBundleIdentifier: focusedOwnerBundleIdentifier,
+            signatureIsValid: signatureIsValid,
+            workSpacesProcessIdentifiers: workSpacesProcessIdentifiers
+        )
+}
+
 private func assertFocusedInputTarget(
     _ node: AccessibilityNode,
     expectedKind: InputFieldKind,
@@ -432,28 +456,45 @@ private func assertFocusedInputTarget(
 ) throws {
     let runningApplication = NSRunningApplication(processIdentifier: processIdentifier)
     let workSpacesProcessIdentifiers = Set(currentWindows().map(\.processIdentifier))
+    let signatureIsValid = processHasAuthenticWorkSpacesSignature(processIdentifier)
     guard inputTargetIsAllowed(
         node,
         expectedKind: expectedKind,
         ownerProcessIdentifier: processIdentifier,
         ownerBundleIdentifier: runningApplication?.bundleIdentifier,
-        signatureIsValid: processHasAuthenticWorkSpacesSignature(processIdentifier),
+        signatureIsValid: signatureIsValid,
         workSpacesProcessIdentifiers: workSpacesProcessIdentifiers
     ) else {
         throw WatcherError.interaction("Input target stopped belonging to the WorkSpaces application")
     }
 
     let application = AXUIElementCreateApplication(processIdentifier)
-    guard
-        let focusedElement = elementAttribute(application, kAXFocusedUIElementAttribute),
-        CFEqual(focusedElement, node.element)
-    else {
-        throw WatcherError.interaction("WorkSpaces input field did not retain focus; refusing to type")
+    guard let focusedElement = elementAttribute(application, kAXFocusedUIElementAttribute) else {
+        throw WatcherError.interaction("WorkSpaces did not report a focused input field; refusing to type")
+    }
+    let focusedProcessIdentifier = try processIdentifierForElement(focusedElement)
+    let focusedNode = accessibilityNode(from: focusedElement)
+    let focusedApplication = NSRunningApplication(processIdentifier: focusedProcessIdentifier)
+
+    // WebKit can return a fresh AX proxy for the same DOM input, so CFEqual is not stable.
+    // Validate the focused field's semantics and signed process ownership instead.
+    guard focusedInputTargetIsAllowed(
+        focusedNode,
+        expectedKind: expectedKind,
+        expectedProcessIdentifier: processIdentifier,
+        focusedProcessIdentifier: focusedProcessIdentifier,
+        focusedOwnerBundleIdentifier: focusedApplication?.bundleIdentifier,
+        signatureIsValid: signatureIsValid,
+        workSpacesProcessIdentifiers: workSpacesProcessIdentifiers
+    ) else {
+        throw WatcherError.interaction(
+            "WorkSpaces focused element is no longer the expected input field; refusing to type"
+        )
     }
 }
 
 private func prepareInputTarget(_ node: AccessibilityNode, expectedKind: InputFieldKind) throws -> pid_t {
-    let processIdentifier = try processIdentifier(of: node.element)
+    let processIdentifier = try processIdentifierForElement(node.element)
     let runningApplication = NSRunningApplication(processIdentifier: processIdentifier)
     let workSpacesProcessIdentifiers = Set(currentWindows().map(\.processIdentifier))
     guard inputTargetIsAllowed(
@@ -863,6 +904,29 @@ private func selfTest() throws {
         workSpacesProcessIdentifiers: [42]
     ))
 
+    let secureProxy = AccessibilityNode(
+        element: AXUIElementCreateApplication(42), role: kAXTextFieldRole,
+        subrole: kAXSecureTextFieldSubrole, title: "", description: "Password", value: "", enabled: true
+    )
+    precondition(focusedInputTargetIsAllowed(
+        secureProxy,
+        expectedKind: .password,
+        expectedProcessIdentifier: 42,
+        focusedProcessIdentifier: 42,
+        focusedOwnerBundleIdentifier: workSpacesBundleIdentifier,
+        signatureIsValid: true,
+        workSpacesProcessIdentifiers: [42]
+    ))
+    precondition(!focusedInputTargetIsAllowed(
+        secureProxy,
+        expectedKind: .password,
+        expectedProcessIdentifier: 42,
+        focusedProcessIdentifier: 7,
+        focusedOwnerBundleIdentifier: workSpacesBundleIdentifier,
+        signatureIsValid: true,
+        workSpacesProcessIdentifiers: [7]
+    ))
+
     let usernameField = AccessibilityNode(
         element: AXUIElementCreateSystemWide(), role: kAXTextFieldRole,
         subrole: "", title: "", description: "Username", value: "example-user", enabled: true
@@ -871,6 +935,15 @@ private func selfTest() throws {
     precondition(InputFieldKind.username.matches(usernameField))
     precondition(!InputFieldKind.password.matches(usernameField))
     precondition(normalizedDiagnosticText(usernameField) == "<editable field redacted>")
+    precondition(!focusedInputTargetIsAllowed(
+        usernameField,
+        expectedKind: .password,
+        expectedProcessIdentifier: 42,
+        focusedProcessIdentifier: 42,
+        focusedOwnerBundleIdentifier: workSpacesBundleIdentifier,
+        signatureIsValid: true,
+        workSpacesProcessIdentifiers: [42]
+    ))
 
     let longText = String(repeating: "a", count: maximumUnicodeUnitsPerEvent + 1)
     let longTextChunks = unicodeEventChunks(longText)
