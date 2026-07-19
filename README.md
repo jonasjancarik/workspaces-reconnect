@@ -4,7 +4,7 @@
 
 A small, deterministic macOS LaunchAgent that keeps the Amazon WorkSpaces desktop client connected. It checks the WorkSpaces accessibility tree every 10 seconds and does not use an LLM, network API, or screenshot model.
 
-The watcher recognizes active sessions, startup progress, disconnected screens, username fields, password fields, and credential errors. Two consecutive actionable detections start a deterministic reconnect flow. Unexpected screens fail closed.
+The watcher recognizes active sessions, startup progress, disconnected screens, username fields, password fields, and credential errors. Explicit UI states take priority over window size, so resizing a disconnected login window cannot make it look like an active session. Two consecutive actionable detections start a deterministic reconnect flow. Unexpected screens fail closed.
 
 ## Security model
 
