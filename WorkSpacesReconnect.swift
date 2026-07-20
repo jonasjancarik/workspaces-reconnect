@@ -461,15 +461,15 @@ private func assertFocusedInputTarget(
     ) else {
         throw WatcherError.interaction("Input target stopped belonging to the WorkSpaces application")
     }
-
     let application = AXUIElementCreateApplication(processIdentifier)
-    guard let focusedElement = elementAttribute(application, kAXFocusedUIElementAttribute) else {
+    let focusedElement = elementAttribute(application, kAXFocusedUIElementAttribute)
+        ?? (boolAttribute(node.element, kAXFocusedAttribute, default: false) ? node.element : nil)
+    guard let focusedElement else {
         throw WatcherError.interaction("WorkSpaces did not report a focused input field; refusing to type")
     }
     let focusedProcessIdentifier = try processIdentifierForElement(focusedElement)
     let focusedNode = accessibilityNode(from: focusedElement)
     let focusedApplication = NSRunningApplication(processIdentifier: focusedProcessIdentifier)
-
     // WebKit can return a fresh AX proxy for the same DOM input, so CFEqual is not stable.
     // Validate the focused field's semantics and signed process ownership instead.
     guard focusedInputTargetIsAllowed(
@@ -704,8 +704,8 @@ private func performLoginFlow(from initial: UISnapshot) throws -> ScreenState {
         }
         try press(reconnect)
         log("pressed WorkSpaces reconnect")
-        guard let next = waitForSnapshot(timeout: 12, matching: [.username, .password, .starting, .activeSession]) else {
-            return .ambiguous
+        guard let next = waitForSnapshot(timeout: 12, matching: [.username, .password, .starting, .credentialError]) else {
+            return snapshot().state
         }
         current = next
     }

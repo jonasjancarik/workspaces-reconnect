@@ -15,7 +15,7 @@ The watcher recognizes active sessions, startup progress, disconnected screens, 
 - The installer explicitly grants the watcher access to its Keychain item. It never uses Keychain's insecure `-A` option, which would grant every application access.
 - Credential input is sent directly to the process that owns the confirmed WorkSpaces field. The watcher never emits system-wide keystrokes, so another foreground application cannot receive the username or password.
 - The password is typed directly into the confirmed secure field and is never placed on the system pasteboard.
-- Before and during input, the watcher verifies Amazon's designated code-signing requirement, confirms that the focused field has the expected username or secure-password role and belongs to that visible WorkSpaces process, and aborts on any mismatch. It does not rely on unstable WebKit Accessibility wrapper identity.
+- Before and during input, the watcher verifies Amazon's designated code-signing requirement, confirms that the focused field has the expected username or secure-password role and belongs to that visible WorkSpaces process, and aborts on any mismatch. It accepts WebKit's field-level focus report when the background app omits its application-level focused element, but does not rely on unstable WebKit Accessibility wrapper identity.
 - Editable fields and registration codes are redacted from diagnostics.
 - Accessibility permission is required for the installed executable. Codex or Terminal permission is not inherited by a LaunchAgent.
 
