@@ -4,7 +4,7 @@
 
 A small, deterministic macOS LaunchAgent that keeps the Amazon WorkSpaces desktop client connected. It checks the WorkSpaces accessibility tree every 10 seconds and does not use an LLM, network API, or screenshot model.
 
-The watcher recognizes active sessions, startup progress, disconnected screens, username fields, password fields, and credential errors. Explicit UI states take priority over window size, so resizing a disconnected login window cannot make it look like an active session. Two consecutive actionable detections start a deterministic reconnect flow. Unexpected screens fail closed.
+The watcher recognizes active sessions, startup progress, disconnected and recoverable network-loss screens, username fields, password fields, and credential errors. Explicit UI states take priority over window size, so resizing a disconnected login window cannot make it look like an active session. Two consecutive actionable detections start a deterministic reconnect flow. Unexpected screens fail closed.
 
 ## Security model
 
@@ -68,7 +68,7 @@ launchctl print gui/$(id -u)/com.jonasjancarik.workspaces-reconnect
 tail -f ~/Library/Application\ Support/WorkSpacesReconnect/watcher.log
 ```
 
-The detector primarily uses the accessibility window description and visible controls. Window dimensions are only a fallback for recognizing a clearly large active session; small windows never trigger login without matching accessibility roles and labels.
+The detector primarily uses the accessibility window description and visible controls. A `No network` or `Network connection lost` screen is actionable only when WorkSpaces also exposes its Reconnect button; the watcher then retries at the normal cooldown instead of remaining idle. Window dimensions are only a fallback for recognizing a clearly large active session; small windows never trigger login without matching accessibility roles and labels.
 
 The watcher writes transition-only diagnostics for unknown, disconnected, credential-error, or accessibility-unavailable states. Repeated checks of the same screen do not produce duplicate snapshots.
 

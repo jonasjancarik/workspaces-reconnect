@@ -293,11 +293,11 @@ private func button(_ nodes: [AccessibilityNode], labels: Set<String>) -> Access
 private func classify(_ nodes: [AccessibilityNode], windows: [WorkSpacesWindow]) -> ScreenState {
     let allText = nodes.map(\.searchableText).joined(separator: " ")
     let windowDescriptions = Set(nodes.filter { $0.role == kAXWindowRole }.map { $0.description.lowercased() })
-
     if allText.contains("starting workspace") || allText.contains("initializing workspace") { return .starting }
     if allText.contains("couldn't verify your sign-in credentials")
         || allText.contains("could not verify your sign-in credentials") { return .credentialError }
-    if allText.contains("disconnected")
+    if (allText.contains("disconnected") || allText.contains("no network")
+        || allText.contains("network connection lost"))
         && button(nodes, labels: ["reconnect", "connect again"]) != nil { return .disconnected }
     if nodes.contains(where: \.isPasswordField)
         && button(nodes, labels: ["sign in", "connect"]) != nil { return .password }
@@ -321,7 +321,6 @@ private func snapshot() -> UISnapshot {
             : .accessibilityUnavailable
         return UISnapshot(state: fallback, nodes: [])
     }
-
     var nodes: [AccessibilityNode] = []
     for processIdentifier in Set(windows.map(\.processIdentifier)) {
         if let root = mainWindow(for: processIdentifier) {
@@ -859,17 +858,18 @@ private func selfTest() throws {
     )
     precondition(active.searchableText.contains("sessionwindow"))
     precondition(classify([active], windows: []) == .activeSession)
-    let disconnected = AccessibilityNode(
-        element: AXUIElementCreateSystemWide(), role: kAXStaticTextRole, subrole: "",
-        title: "Disconnected", description: "", value: "", enabled: true
-    )
     let reconnect = AccessibilityNode(
         element: AXUIElementCreateSystemWide(), role: kAXButtonRole, subrole: "",
         title: "Reconnect", description: "", value: "", enabled: true
     )
     let largeWindow = WorkSpacesWindow(processIdentifier: 42, width: 1_600, height: 1_200)
-    precondition(classify([disconnected, reconnect], windows: [largeWindow]) == .disconnected)
-
+    for title in ["Disconnected", "No network", "Network connection lost"] {
+        let recoverable = AccessibilityNode(
+            element: AXUIElementCreateSystemWide(), role: kAXStaticTextRole, subrole: "",
+            title: title, description: "", value: "", enabled: true
+        )
+        precondition(classify([recoverable, reconnect], windows: [largeWindow]) == .disconnected)
+    }
     let secure = AccessibilityNode(
         element: AXUIElementCreateSystemWide(), role: kAXTextFieldRole,
         subrole: kAXSecureTextFieldSubrole, title: "", description: "Password", value: "", enabled: true
