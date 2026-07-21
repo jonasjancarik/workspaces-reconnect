@@ -18,6 +18,7 @@ The watcher recognizes active sessions, startup progress, disconnected and recov
 - Before and during input, the watcher verifies Amazon's designated code-signing requirement, confirms that the focused field has the expected username or secure-password role and belongs to that visible WorkSpaces process, and aborts on any mismatch. It accepts WebKit's field-level focus report when the background app omits its application-level focused element, but does not rely on unstable WebKit Accessibility wrapper identity.
 - Editable fields and registration codes are redacted from diagnostics.
 - Accessibility permission is required for the installed executable. Codex or Terminal permission is not inherited by a LaunchAgent.
+- Only the installer requests an Accessibility entry. The scheduled watcher never recreates a removed permission row by itself.
 
 The watcher can safely reconnect while another application is in the foreground. It targets WorkSpaces by process ID and does not take keyboard focus away from the application you are using.
 
@@ -51,7 +52,7 @@ No compiled binary, generated plist, credential, log, or state file needs to be 
 
 ## Update
 
-Run `./install.sh` again. Rebuilding changes the unsigned local executable's macOS privacy identity. If Accessibility settings lists any old `workspaces-reconnect` rows, the installer asks you to select each one and click the − (remove) button at the bottom of the list; turning its toggle off is not enough. There might not be an old row, in which case you can continue without removing anything. The installer then registers a new entry for you to enable and refreshes the Keychain trusted-application record.
+Run `./install.sh` again. Rebuilding changes the unsigned local executable's macOS privacy identity. Before asking you to remove old `workspaces-reconnect` rows, the installer stops the existing watcher so it cannot recreate its permission while you are cleaning up. Turning a toggle off is not enough; select each old row and click the − (remove) button at the bottom of the list. There might not be an old row, in which case you can continue without removing anything. The installer then registers exactly one new entry for you to enable and refreshes the Keychain trusted-application record.
 
 ## Verify
 

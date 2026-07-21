@@ -29,6 +29,14 @@ if ! grep -Fq 'plutil -remove ProgramArguments.0 "$temporary_plist"' "$INSTALLER
     exit 1
 fi
 
+bootout_line="$(grep -nF 'launchctl bootout "$DOMAIN/$LABEL"' "$INSTALLER" | head -n 1)"
+cleanup_prompt_line="$(grep -nF 'Press Return when no old workspaces-reconnect rows remain' "$INSTALLER" | head -n 1)"
+if [[ -z "$bootout_line" || -z "$cleanup_prompt_line" \
+    || "${bootout_line%%:*}" -ge "${cleanup_prompt_line%%:*}" ]]; then
+    print -u2 "Accessibility regression: stop the old watcher before removing its permission rows."
+    exit 1
+fi
+
 temporary_directory="$(mktemp -d "${TMPDIR:-/tmp}/workspaces-reconnect-test.XXXXXX")"
 temporary_binary="$temporary_directory/workspaces-reconnect"
 temporary_plist="$temporary_directory/com.jonasjancarik.workspaces-reconnect.plist"
@@ -90,6 +98,11 @@ fi
 
 if grep -Fq 'NSPasteboard' "$SOURCE"; then
     print -u2 "Security regression: credentials must never use the system pasteboard."
+    exit 1
+fi
+
+if grep -Fq 'lastAccessibilityPromptAt' "$SOURCE"; then
+    print -u2 "Accessibility regression: the scheduled watcher must not recreate permission rows."
     exit 1
 fi
 

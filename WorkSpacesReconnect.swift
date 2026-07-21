@@ -40,7 +40,6 @@ private enum ScreenState: String, Codable {
 private struct WatcherState: Codable {
     var consecutiveActionableChecks = 0
     var lastAttemptAt: TimeInterval = 0
-    var lastAccessibilityPromptAt: TimeInterval?
     var lastObservation = ""
     var lastDiagnosticSummary: String?
     var blockedReason: String?
@@ -746,20 +745,8 @@ private func performLoginFlow(from initial: UISnapshot) throws -> ScreenState {
 }
 
 private func check() throws {
-    let accessibilityTrusted = AXIsProcessTrusted()
     let current = snapshot()
     var state = loadState()
-
-    if !accessibilityTrusted {
-        let now = Date().timeIntervalSince1970
-        let lastPrompt = state.lastAccessibilityPromptAt ?? 0
-        if now - lastPrompt >= 24 * 60 * 60 {
-            let promptKey = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
-            _ = AXIsProcessTrustedWithOptions([promptKey: true] as CFDictionary)
-            state.lastAccessibilityPromptAt = now
-            log("requested macOS Accessibility permission; next prompt is suppressed for 24 hours")
-        }
-    }
 
     if state.lastObservation != current.state.rawValue {
         log("observation=\(current.state.rawValue)")

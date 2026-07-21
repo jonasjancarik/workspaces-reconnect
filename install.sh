@@ -128,6 +128,8 @@ if [[ -e "$PLIST_PATH" || -e "$BINARY" ]]; then
     is_update=true
 fi
 
+launchctl bootout "$DOMAIN/$LABEL" >/dev/null 2>&1 || true
+
 if [[ "$is_update" == true ]]; then
     print
     print "The rebuilt executable has a new macOS privacy identity."
@@ -139,7 +141,6 @@ if [[ "$is_update" == true ]]; then
     IFS= read -r _
 fi
 
-launchctl bootout "$DOMAIN/$LABEL" >/dev/null 2>&1 || true
 move_to_trash "$BINARY"
 move_to_trash "$PLIST_PATH"
 move_to_trash "$STATE_PATH"
